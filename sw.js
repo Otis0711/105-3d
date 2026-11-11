@@ -1,13 +1,14 @@
 // 離線模式（Service Worker）：網站開過一次後，程式與模型存在手機裡，現場沒有網路也能開。
 // - 程式檔（html/js/css）：有網路先拿最新版，沒網路用存檔。
 // - 模型資料 data/*?v=<匯出時間>：同一版本直接用存檔；Revit 重新匯出後 v 改變，會下載新版並刪掉舊版。
-// - data/manifest.json：有網路先拿最新（才知道模型有沒有更新），沒網路用存檔。
+// - data/manifest.json、schemes.json、views.json：有網路先拿最新，沒網路用存檔。
 const CACHE = 'w3d-v1';
 
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', e => e.waitUntil(self.clients.claim()));
 
-const isData = u => /\/data\//.test(u.pathname) && !/manifest\.json$/.test(u.pathname);
+// manifest、顏色方案、視圖設定檔案小且可能單獨更新：一律網路優先
+const isData = u => /\/data\//.test(u.pathname) && !/(manifest|schemes|views)\.json$/.test(u.pathname);
 
 self.addEventListener('fetch', e => {
   const req = e.request;
