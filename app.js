@@ -114,16 +114,25 @@ async function load() {
     const out = new Uint8Array(n); let o = 0; for (const p of parts) { out.set(p, o); o += p.length; }
     return B64 ? b64decode(out) : out.buffer;
   }
+  // GitHub Pages 上的幾何檔是 meshopt 無損壓縮（manifest.binFmt = 'meshopt'，publish.bat 產生 data/<key>.m.bin），下載量約少 40%
+  const MO = MAN.binFmt === 'meshopt' ? (await import('./vendor/meshopt_decoder.module.js')).MeshoptDecoder : null;
+  if (MO) await MO.ready;
   await Promise.all(CATS.map(async (cm, ci) => {
     // 幾何檔副檔名：預設 .bin；放在只接受特定檔案類型的主機（如 claude.ai）時改名（manifest.binExt）
-    const BX = MAN.binExt || 'bin';
+    const BX = MO ? 'm.bin' : MAN.binExt || 'bin';
     // 大檔可分段放置（cm.parts：data/<key>.0.bin、.1.bin…，給有單檔大小限制的主機用），讀進來再接回一個檔
     const binP = cm.parts > 1
       ? Promise.all(Array.from({ length: cm.parts }, (_, i) => fetchBuf(`data/${cm.key}.${i}.${BX}${V}`))).then(bs => {
         const out = new Uint8Array(bs.reduce((s, b) => s + b.byteLength, 0)); let o = 0; for (const b of bs) { out.set(new Uint8Array(b), o); o += b.byteLength; } return out.buffer; })
       : fetchBuf(`data/${cm.key}.${BX}${V}`);
-    const [buf, meta] = await Promise.all([binP, fetch(`data/${cm.key}.meta.json${V}`).then(r => r.json())]);
+    let [buf, meta] = await Promise.all([binP, fetch(`data/${cm.key}.meta.json${V}`).then(r => r.json())]);
     const nv = meta.nv, ni = meta.ni;
+    if (MO) {
+      const src = new Uint8Array(buf), out = new Uint8Array(nv * 12 + ni * 4);
+      MO.decodeVertexBuffer(out.subarray(0, nv * 12), nv, 12, src.subarray(0, cm.vb));
+      MO.decodeIndexBuffer(out.subarray(nv * 12), ni, 4, src.subarray(cm.vb));
+      buf = out.buffer;
+    }
     // 幾何檔與構件清單必須是同一次匯出（匯出進行中讀取會不一致）
     if (buf.byteLength !== nv * 12 + ni * 4 || meta.els.length !== cm.n) throw new Error('MISMATCH');
     const pos = new Float32Array(buf, 0, nv * 3), idx = new Uint32Array(buf, nv * 12, ni);
@@ -731,9 +740,10 @@ function offlinePrep() {
   if (!('serviceWorker' in navigator) || EMBED || !window.isSecureContext || /^(localhost|127\.)/.test(location.hostname)) return;
   navigator.serviceWorker.register('sw.js').then(async () => {
     const reg = await navigator.serviceWorker.ready;
-    const V = S.ver, BX = MAN.binExt || 'bin';
+    const V = S.ver, MO = MAN.binFmt === 'meshopt', BX = MO ? 'm.bin' : MAN.binExt || 'bin';
     const urls = ['./', 'index.html', 'app.js', 'i18n.js', 'style.css', 'vendor/three.module.min.js', 'vendor/OrbitControls.js', 'vendor/three-mesh-bvh.module.js',
       'data/manifest.json', 'data/schemes.json' + V];
+    if (MO) urls.push('vendor/meshopt_decoder.module.js');
     if (AR_ON) urls.push('ar.js', 'qrpose.js', 'stations.json', 'vendor/jsQR.js');
     for (const c of MAN.cats) {
       urls.push(`data/${c.key}.meta.json${V}`, `data/${c.key}.json${V}`);
