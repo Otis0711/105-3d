@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>105市道 3D 模型</title>
+<link rel="stylesheet" href="style.css">
+<script type="importmap">
+{"imports":{
+  "three":"./vendor/three.module.min.js",
+  "three/addons/controls/OrbitControls.js":"./vendor/OrbitControls.js",
+  "three-mesh-bvh":"./vendor/three-mesh-bvh.module.js"
+}}
+</script>
+</head>
+<body>
+<video id="arvid" class="hide" playsinline muted autoplay></video>
+<canvas id="c"></canvas>
+<div id="labels"></div>
+
+<!-- 工具列 -->
+<nav id="toolbar">
+  <button data-tool="walk"><svg viewBox="0 0 24 24"><circle cx="13" cy="4" r="2"/><path d="M10 22l2-7 3 3v6M8 12l3-4 4 1 3 4M11 8l-1 6"/></svg><span data-i18n>漫遊</span></button>
+  <button data-tool="locate"><svg viewBox="0 0 24 24"><path d="M12 22s7-7.5 7-13a7 7 0 0 0-14 0c0 5.5 7 13 7 13z"/><circle cx="12" cy="9" r="2.5"/></svg><span data-i18n>位置</span></button>
+  <button data-tool="select" class="on"><svg viewBox="0 0 24 24"><path d="M5 3l14 8-6 2-2 6z"/></svg><span data-i18n>選取</span></button>
+  <button data-tool="measure"><svg viewBox="0 0 24 24"><path d="M3 17L17 3l4 4L7 21z"/><path d="M7 13l2 2M10 10l2 2M13 7l2 2"/></svg><span data-i18n>測量</span></button>
+  <button data-tool="section"><svg viewBox="0 0 24 24"><path d="M12 2l9 5v10l-9 5-9-5V7z"/><path d="M3 12h18" stroke-dasharray="2 2"/></svg><span data-i18n>剖面</span></button>
+  <button data-tool="more"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg><span data-i18n>更多</span></button>
+</nav>
+
+<!-- 座標顯示 -->
+<div id="hud"><span id="hudxyz" data-i18n>X Y Z 模型座標</span><span class="sep">｜</span><span id="hudn" data-i18n>N 真北</span></div>
+
+<div id="ver" title="點擊查看各類別匯出時間" data-i18n-title></div>
+
+<!-- 顏色方案（Revit 視圖樣版）與語言 -->
+<div id="scheme" class="hide">
+  <svg viewBox="0 0 24 24"><circle cx="8" cy="9" r="3"/><circle cx="16" cy="9" r="3"/><circle cx="12" cy="16" r="3"/></svg>
+  <select id="schsel" title="切換顏色方案（Revit 視圖樣版）" data-i18n-title></select>
+  <button id="legbtn" title="顯示／隱藏圖例" data-i18n-title><span data-i18n>圖例</span></button>
+  <select id="langsel" class="langsel" title="語言 / Bahasa / Ngôn ngữ"><option value="zh">中文</option><option value="id">Indonesia</option><option value="vi">Tiếng Việt</option></select>
+</div>
+<section id="legend" class="win hide"></section>
+
+<!-- 指北與視角 -->
+<div id="compass" title="點擊切換為俯視（北朝上）" data-i18n-title>
+  <div id="needle"><b>N</b><i></i></div>
+</div>
+<div id="views">
+  <button data-view="top" title="俯視" data-i18n-title><span data-i18n>俯</span></button>
+  <button data-view="n" title="由北側看" data-i18n-title><span data-i18n>北</span></button>
+  <button data-view="e" title="由東側看" data-i18n-title><span data-i18n>東</span></button>
+  <button data-view="s" title="由南側看" data-i18n-title><span data-i18n>南</span></button>
+  <button data-view="w" title="由西側看" data-i18n-title><span data-i18n>西</span></button>
+  <button data-view="iso" title="等角" data-i18n-title>3D</button>
+</div>
+
+<!-- 平移縮放 -->
+<div id="navpad">
+  <button id="nvpan" title="單指／左鍵改為平移" data-i18n-title><span data-i18n>平移</span></button>
+  <button id="nvin" title="拉近" data-i18n-title>＋</button>
+  <button id="nvout" title="拉遠" data-i18n-title>－</button>
+  <button id="nvup" title="上升" data-i18n-title>▲</button>
+  <button id="nvdn" title="下降" data-i18n-title>▼</button>
+</div>
+
+<!-- 工具面板 / 側欄 / 資訊視窗 -->
+<section id="panel" class="win hide"></section>
+<aside id="side" class="hide"></aside>
+<section id="info" class="win hide"></section>
+<div id="toast" class="hide"></div>
+<!-- 現場 AR（ar.js） -->
+<div id="ar" class="hide"></div>
+
+<!-- 開頭選擇 -->
+<div id="start">
+  <div class="box">
+    <div class="langs"><button data-lang="zh">中文</button><button data-lang="id">Bahasa Indonesia</button><button data-lang="vi">Tiếng Việt</button></div>
+    <h1 data-i18n>新北市105市道改善蜿蜒路段<br>新闢道路工程 3D 模型</h1>
+    <p data-i18n>請選擇要檢視的內容</p>
+    <button class="big blue" data-mode="check"><b data-i18n>模型檢核</b><small data-i18n>完整模型、測量、剖面、GPS 定位</small></button>
+    <button class="big orange" data-mode="progress"><b data-i18n>進度檢核</b><small data-i18n>依 Revit 施工階段檢視工序與數量</small></button>
+    <button class="big green" data-mode="ar"><b data-i18n>現場 AR</b><small data-i18n>手機鏡頭疊合未來完成的模型（站在測量樁上校正）</small></button>
+    <div id="loadbar"><i></i></div>
+    <p id="loadtxt">載入模型中…</p>
+    <p id="startver" class="mut"></p>
+  </div>
+</div>
+
+<script>
+  // 先載入語言檔（加時間參數避免快取舊版），再檢查開啟方式並載入主程式
+  function w3dFail(html) {
+    var t = document.getElementById('loadtxt'); t.innerHTML = html; t.style.color = '#fbbf24'; t.style.lineHeight = '1.7';
+    document.querySelectorAll('#start .big').forEach(function (b) { b.disabled = true; b.style.opacity = .4; });
+  }
+  (function () {
+    var s = document.createElement('script');
+    s.src = 'i18n.js?v=' + Date.now();
+    s.onload = function () {
+      initI18n();
+      document.getElementById('loadtxt').textContent = t('載入模型中…');
+      if (!/^https?:$/.test(location.protocol)) {
+        // 直接雙擊 index.html（file://）時瀏覽器會擋住讀取，改顯示開啟方式說明
+        w3dFail(t('無法直接開啟 index.html<br>請用以下任一方式開啟網站：<br>① 雙擊資料夾中的 <b>start.bat</b><br>② Revit「3D網站」頁籤 →「開啟網站」<br>③ 伺服器已啟動時，瀏覽器輸入 <b>http://localhost:8765</b>'));
+      } else {
+        import('./app.js?v=' + Date.now()).catch(function (e) { w3dFail(t('網站程式載入失敗：{msg}<br>請按 F5 重新整理，或重新執行 start.bat', { msg: e.message })); });
+      }
+    };
+    s.onerror = function () { w3dFail('i18n.js 載入失敗，請按 F5 / Gagal memuat, tekan F5 / Lỗi tải, nhấn F5'); };
+    document.body.appendChild(s);
+  })();
+</script>
+</body>
+</html>

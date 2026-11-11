@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>QR 定位牌列印</title>
+<style>
+  :root{--bg:#f4f6f9;--tx:#111827;--mut:#5b6474;--line:#d5dbe3;--acc:#2563eb}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.6 "Microsoft JhengHei","PingFang TC","Noto Sans TC",system-ui,sans-serif}
+  .tool{max-width:820px;margin:0 auto;padding:16px}
+  .tool h1{font-size:20px;margin:0 0 6px}
+  .tool p{margin:4px 0;color:var(--mut)}
+  .tool label{display:block;margin:10px 0 4px;font-weight:bold}
+  .tool input{width:100%;padding:8px;border:1px solid var(--line);border-radius:6px;font:inherit}
+  .tool button{margin-top:10px;padding:9px 18px;border:0;border-radius:7px;background:var(--acc);color:#fff;font:inherit;font-weight:bold;cursor:pointer}
+  .sheet{background:#fff;max-width:820px;margin:16px auto;padding:10mm;border:1px solid var(--line);text-align:center;page-break-after:always;break-after:page}
+  .sheet h2{margin:0;font-size:26px}
+  .sheet .d{color:#333;font-size:13px;margin:2px 0 6mm}
+  .sheet svg{display:block;margin:0 auto}
+  .sheet .info{font-size:12px;color:#333;margin-top:5mm;text-align:left;display:inline-block}
+  .warn{color:#b45309}
+  @media print{
+    @page{size:auto;margin:8mm}
+    body{background:#fff}
+    .tool{display:none}
+    .sheet{border:0;margin:0;padding:0;max-width:none}
+  }
+</style>
+</head>
+<body>
+<div class="tool">
+  <h1>QR 定位牌列印</h1>
+  <p>標記資料來自 <b>stations.json</b> 的 markers。列印時請選「<b>實際大小／100%</b>」，不要選「符合頁面」。</p>
+  <p>印好後用尺量 QR 黑色方塊<b>外緣</b>邊長，要和下面寫的尺寸一樣；不一樣時請把量到的數字改到 stations.json 的 size。</p>
+  <label for="base">QR 內容的網址（手機用相機掃描會直接打開這個網站的 AR）</label>
+  <input id="base">
+  <p>正式上線後請改成公司網站的網址再列印；現在的預設值是你目前開啟這一頁的網址。</p>
+  <button onclick="print()">列印</button>
+</div>
+<div id="sheets"></div>
+<script src="vendor/qrcode.js"></script>
+<script>
+  const base = document.getElementById('base');
+  base.value = location.origin + location.pathname.replace(/[^/]*$/, '');
+  let markers = [];
+  const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  function render() {
+    const out = [];
+    for (const m of markers) {
+      const url = base.value.replace(/\/?$/, '/') + '?m=ar&qr=' + encodeURIComponent(m.id);
+      const q = qrcode(0, 'M'); q.addData(url); q.make();
+      const n = q.getModuleCount(), quiet = 2, mm = (m.size || 0.2) * 1000, cell = mm / n, total = mm + 2 * quiet * cell;
+      let rects = '';
+      for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (q.isDark(r, c)) rects += `M${c + quiet},${r + quiet}h1v1h-1z`;
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${total}mm" height="${total}mm" viewBox="0 0 ${n + 2 * quiet} ${n + 2 * quiet}" shape-rendering="crispEdges"><rect width="100%" height="100%" fill="#fff"/><path d="${rects}" fill="#000"/></svg>`;
+      const where = m.TL ? `三角測量：TL E ${m.TL.E} N ${m.TL.N} H ${m.TL.H}` : `中心 E ${m.E}　N ${m.N}　H ${m.H}　正面朝向 ${m.facing}°（順時針自北）`;
+      const big = total > 194 ? `<div class="warn">QR 加白邊共 ${(total / 10).toFixed(1)} cm，A4 放不下，請用 A3 以上紙張。</div>` : '';
+      out.push(`<div class="sheet"><h2>定位標記 ${esc(m.id)}</h2><div class="d">${esc(m.desc || '')}</div>${svg}
+        <div class="info">QR 黑色方塊外緣邊長：<b>${(mm / 10).toFixed(1)} cm</b>（${n}×${n} 格）　${big}<br>${esc(where)}<br>
+        安裝：牌面保持平整、垂直；QR 的上方朝上。內容：${esc(url)}</div></div>`);
+    }
+    document.getElementById('sheets').innerHTML = out.join('') || '<div class="sheet">stations.json 沒有 markers</div>';
+  }
+  base.oninput = render;
+  fetch('stations.json?t=' + Date.now(), { cache: 'no-store' }).then(r => r.json()).then(j => { markers = j.markers || []; render(); })
+    .catch(e => { document.getElementById('sheets').innerHTML = `<div class="sheet">讀取 stations.json 失敗：${esc(e.message)}（請用 start.bat 或 start_https.bat 開啟）</div>`; });
+</script>
+</body>
+</html>
