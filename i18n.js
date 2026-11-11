@@ -28,7 +28,7 @@
       '材料色': 'Warna material', '類別色': 'Warna kategori', 'Revit 視圖樣版': 'Template tampilan Revit',
       '點選項目可切換顯示。上方的篩選器優先權較高（同 Revit）。': 'Klik item untuk menampilkan/menyembunyikan. Filter di atas lebih diutamakan (sama seperti Revit).',
       'Revit 樣版中此篩選器設為不可見': 'Filter ini disembunyikan di template Revit', '樣版隱藏': 'Tersembunyi',
-      '全部顯示': 'Tampilkan semua', '還原樣版設定': 'Kembalikan ke template', '其他構件以淺灰顯示': 'Elemen lain berwarna abu-abu muda',
+      '全部顯示': 'Tampilkan semua', '還原樣版設定': 'Kembalikan ke template', '疊加其他樣版': 'Gabungkan template lain', 'Revit 視圖': 'Tampilan Revit', '（不套用視圖，顯示全部）': '(Tanpa tampilan, tampilkan semua)', '視圖：{n}': 'Tampilan: {n}', '視圖': 'Tampilan', '剖面框': 'Kotak potong', 'Revit 已發布的 3D 視圖': 'Tampilan 3D Revit yang dipublikasikan', '其他構件以淺灰顯示': 'Elemen lain berwarna abu-abu muda',
       '樣版隱藏的構件：': 'Elemen tersembunyi: ', '半透明': 'Transparan', '不顯示': 'Tidak ditampilkan', '樣版關閉的類別：': 'Kategori dimatikan di template: ', '（隱藏）': ' (tersembunyi)',
       // 漫遊與資訊視窗
       '漫遊：拖曳轉向，W A S D／方向鍵移動，Q E 升降，Shift 加速，滾輪前後': 'Jelajah: seret untuk menoleh, W A S D / panah untuk bergerak, Q E naik/turun, Shift lebih cepat, roda mouse maju/mundur',
@@ -104,7 +104,7 @@
       '材料色': 'Màu vật liệu', '類別色': 'Màu theo loại', 'Revit 視圖樣版': 'Mẫu khung nhìn Revit',
       '點選項目可切換顯示。上方的篩選器優先權較高（同 Revit）。': 'Nhấn vào mục để bật/tắt hiển thị. Bộ lọc ở trên được ưu tiên hơn (giống Revit).',
       'Revit 樣版中此篩選器設為不可見': 'Bộ lọc này bị ẩn trong mẫu Revit', '樣版隱藏': 'Ẩn theo mẫu',
-      '全部顯示': 'Hiện tất cả', '還原樣版設定': 'Khôi phục theo mẫu', '其他構件以淺灰顯示': 'Cấu kiện khác hiển thị màu xám nhạt',
+      '全部顯示': 'Hiện tất cả', '還原樣版設定': 'Khôi phục theo mẫu', '疊加其他樣版': 'Kết hợp mẫu khác', 'Revit 視圖': 'Khung nhìn Revit', '（不套用視圖，顯示全部）': '(Không áp dụng khung nhìn, hiện tất cả)', '視圖：{n}': 'Khung nhìn: {n}', '視圖': 'Khung nhìn', '剖面框': 'Hộp cắt', 'Revit 已發布的 3D 視圖': 'Khung nhìn 3D Revit đã xuất bản', '其他構件以淺灰顯示': 'Cấu kiện khác hiển thị màu xám nhạt',
       '樣版隱藏的構件：': 'Cấu kiện bị ẩn: ', '半透明': 'Bán trong suốt', '不顯示': 'Không hiển thị', '樣版關閉的類別：': 'Loại bị tắt trong mẫu: ', '（隱藏）': ' (ẩn)',
       '漫遊：拖曳轉向，W A S D／方向鍵移動，Q E 升降，Shift 加速，滾輪前後': 'Đi dạo: kéo để xoay, W A S D / phím mũi tên để di chuyển, Q E lên/xuống, Shift đi nhanh, cuộn chuột tiến/lùi',
       '縮放至': 'Phóng tới', '隔離': 'Cô lập', '隱藏': 'Ẩn', '剖切此處': 'Cắt tại đây',

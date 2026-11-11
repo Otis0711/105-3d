@@ -43,6 +43,11 @@ body.progress #legend{left:354px}
 .lg .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .lg .cnt{font-size:12px;color:var(--mut);font-variant-numeric:tabular-nums}
 .lg.off{opacity:.45}
+.lgh{font-size:12px;color:var(--org);margin:8px 0 2px;padding-top:6px;border-top:1px solid var(--line)}
+.lgh:first-of-type{border-top:0;margin-top:0;padding-top:0}
+.lgx{margin-top:8px;border-top:1px solid var(--line);padding-top:6px}
+.lgx summary{cursor:pointer;font-size:13px;color:var(--acc);margin-bottom:4px}
+.lgx label.chk{display:flex;gap:6px;align-items:center;padding:3px 2px;font-size:13px}
 .lg.off .sw{background:transparent!important;border:1px dashed var(--mut)}
 .lg .tag{font-size:11px;color:var(--org);border:1px solid #f59e0b66;border-radius:4px;padding:0 4px}
 
@@ -55,6 +60,14 @@ body.progress #legend{left:354px}
 #views{position:fixed;right:12px;bottom:190px;display:flex;flex-direction:column;gap:3px;z-index:5}
 #views button,#navpad button{background:var(--panel);border:1px solid var(--line);border-radius:7px;width:40px;height:30px;font-size:12px;padding:0}
 #views button:hover,#navpad button:hover{background:var(--panel2)}
+#views #vbtn{margin-bottom:6px;color:var(--acc);font-weight:600}
+#views #vbtn.act{background:var(--acc);border-color:var(--acc);color:#fff}
+#views #vbtn.on{outline:2px solid var(--acc)}
+#vlist{right:62px;bottom:120px;width:280px;max-height:calc(100% - 260px)}
+.vi{padding:7px 8px;border-radius:6px;cursor:pointer;display:flex;align-items:center;gap:6px;font-size:13px}
+.vi:hover{background:var(--panel2)}
+.vi.on{background:var(--acc);color:#fff}
+.vi .tag{font-size:11px;color:var(--org);border:1px solid #f59e0b66;border-radius:4px;padding:0 4px;margin-left:auto}
 #navpad{position:fixed;right:12px;bottom:12px;display:flex;gap:3px;z-index:5;flex-wrap:wrap;justify-content:flex-end;width:220px}
 #navpad button{width:40px;height:36px;font-size:15px}
 #navpad #nvpan{width:48px;font-size:12px}
@@ -139,6 +152,7 @@ td.n,th.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
   #panel,#info{left:8px!important;right:8px;width:auto;top:auto;bottom:96px;max-height:45%}
   #side{left:8px;right:8px;width:auto;top:auto;bottom:96px;height:45%}
   #views{bottom:auto;top:84px;right:8px}
+  #vlist{left:8px!important;right:56px;width:auto;top:84px;bottom:auto;max-height:50%}
   #compass{right:auto;left:8px;top:84px;bottom:auto;width:52px;height:52px}
   #needle i{top:16px;border-bottom-width:14px}#needle i::after{top:14px;border-top-width:14px}
   #hud{bottom:52px;left:8px}

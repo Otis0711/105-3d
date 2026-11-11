@@ -79,7 +79,7 @@ const S = {
 let MAN = null, PH = [];
 const rgb = h => { const c = new THREE.Color(h); return [c.r, c.g, c.b]; };
 const C_SEL = rgb(0x22d3ee), C_NEW = rgb(0xf59e0b), C_DEMO = rgb(0xef4444), C_DIM = rgb(0xc4cad3);
-Object.assign(S, { schemes: [], scheme: null, legShow: [], dimOthers: true, hideMode: 2 });
+Object.assign(S, { schemes: [], scheme: null, legShow: [], dimOthers: true, hideMode: 2, views: [], view: null });
 
 // Base64 文字（Uint8Array 的 ASCII 位元組）→ ArrayBuffer；忽略換行等非 Base64 字元
 const B64T = (() => { const a = new Int16Array(256).fill(-1); 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'.split('').forEach((c, i) => a[c.charCodeAt(0)] = i); return a; })();
@@ -164,6 +164,7 @@ async function load() {
   S.cats.forEach((c, i) => c.ci = i);
   S.clip.box.copy(S.bbox);
   await loadSchemes(V);
+  await loadViews(V);
   applyState(); fitAll(false);
   S.loadedN = S.cats.reduce((s, c) => s + c.n, 0);
   $('loadtxt').textContent = t('載入完成：{n} 個構件', { n: S.loadedN.toLocaleString() });
@@ -193,32 +194,53 @@ async function loadSchemes(V) {
   sel.onchange = () => setScheme(sel.value);
   $('legbtn').onclick = () => { const L = $('legend'); L.classList.toggle('hide'); $('legbtn').classList.toggle('on', !L.classList.contains('hide')); };
   $('scheme').classList.remove('hide');
-  let saved = null; try { saved = localStorage.getItem('w3d.scheme'); } catch {}
-  if (saved != null) { const i = S.schemes.findIndex(s => s.name === saved); if (i >= 0) { sel.value = String(i); setScheme(String(i), false); } else if (saved === 'cat') { sel.value = 'cat'; setScheme('cat', false); } }
+  let saved = null, extra = []; try { saved = localStorage.getItem('w3d.scheme'); extra = JSON.parse(localStorage.getItem('w3d.schemeX') || '[]'); } catch {}
+  if (saved != null) {
+    const i = S.schemes.findIndex(s => s.name === saved);
+    if (i >= 0) { sel.value = String(i); setScheme(String(i), false, extra.map(n => S.schemes.findIndex(s => s.name === n)).filter(j => j >= 0 && j !== i)); }
+    else if (saved === 'cat') { sel.value = 'cat'; setScheme('cat', false); }
+  }
 }
 function schemeOptions() {
   const sel = $('schsel'), v = sel.value;
   sel.innerHTML = `<option value="mat">${t('材料色')}</option><option value="cat">${t('類別色')}</option>` +
-    (S.schemes.length ? `<optgroup label="${t('Revit 視圖樣版')}">${S.schemes.map((s, i) => `<option value="${i}">${esc(tc(s.name))}</option>`).join('')}</optgroup>` : '');
+    (S.schemes.some(s => !s.view) ? `<optgroup label="${t('Revit 視圖樣版')}">${S.schemes.map((s, i) => s.view ? '' : `<option value="${i}">${esc(tc(s.name))}</option>`).join('')}</optgroup>` : '');
   if (v) sel.value = v;
 }
-function setScheme(val, apply = true) {
+// 顏色方案可以多選疊加（例如大樑分色＋小樑分色）：val 是主要樣版，extra 是疊加的其他樣版（索引）。
+// 合併規則：顏色以先選的樣版優先；構件只有在「沒有任何已選樣版替它上色」時才套用樣版的隱藏；類別要所有樣版都關閉才隱藏。
+function setScheme(val, apply = true, extra = []) {
   for (const c of S.cats) { c.sc.fill(-1); c.sh.fill(-1); }
   S.scheme = null;
   if (val === 'mat' || val === 'cat') {
     S.useMat = val === 'mat';
-    try { localStorage.setItem('w3d.scheme', val); } catch {}
+    try { localStorage.setItem('w3d.scheme', val); localStorage.removeItem('w3d.schemeX'); } catch {}
   } else {
-    const s = S.schemes[+val]; S.useMat = true;
+    const list = [+val, ...extra.filter(i => i !== +val && S.schemes[i])];
     const byKey = new Map(S.cats.map(c => [c.key, c]));
-    for (const [key, g] of Object.entries(s.els)) {
-      const c = byKey.get(key); if (!c) continue;
-      for (const [id, li] of Object.entries(g.c || {})) { const k = c.idIdx.get(+id); if (k !== undefined) c.sc[k] = li; }
-      for (const [id, li] of Object.entries(g.h || {})) { const k = c.idIdx.get(+id); if (k !== undefined) c.sh[k] = li; }
+    const legend = [], catColor = {}; let hiddenCats = null;
+    for (const si of list) {
+      const s = S.schemes[si], off = legend.length;
+      legend.push(...s.legend.map(l => ({ ...l, g: si })));
+      for (const [key, g] of Object.entries(s.els)) {
+        const c = byKey.get(key); if (!c) continue;
+        for (const [id, li] of Object.entries(g.c || {})) { const k = c.idIdx.get(+id); if (k !== undefined && c.sc[k] < 0) c.sc[k] = li + off; }
+      }
+      for (const [k, li] of Object.entries(s.catColor || {})) if (catColor[k] === undefined) catColor[k] = li + off;
+      const hc = new Set(s.hiddenCats); hiddenCats = hiddenCats ? new Set([...hiddenCats].filter(k => hc.has(k))) : hc;
     }
-    S.scheme = { ...s, idx: +val, hiddenCats: new Set(s.hiddenCats), rgb: s.legend.map(l => l.color >= 0 ? rgb(l.color) : null) };
-    S.legShow = s.legend.map(l => !l.hide);
-    try { localStorage.setItem('w3d.scheme', s.name); } catch {}
+    for (const si of list) {
+      const s = S.schemes[si], off = legend.findIndex(l => l.g === si);
+      for (const [key, g] of Object.entries(s.els)) {
+        const c = byKey.get(key); if (!c) continue;
+        for (const [id, li] of Object.entries(g.h || {})) { const k = c.idIdx.get(+id); if (k !== undefined && c.sc[k] < 0 && c.sh[k] < 0) c.sh[k] = li + off; }
+      }
+    }
+    const name = list.map(i => S.schemes[i].name).join(' ＋ ');
+    S.useMat = true;
+    S.scheme = { name, list, legend, catColor, idx: +val, hiddenCats, rgb: legend.map(l => l.color >= 0 ? rgb(l.color) : null) };
+    S.legShow = legend.map(l => !l.hide);
+    try { localStorage.setItem('w3d.scheme', S.schemes[+val].name); localStorage.setItem('w3d.schemeX', JSON.stringify(list.slice(1).map(i => S.schemes[i].name))); } catch {}
   }
   renderLegend();
   // 使用者手動切換時才自動打開圖例（開網頁時沿用上次的方案則不打開，避免手機上蓋住畫面）
@@ -231,16 +253,23 @@ function renderLegend() {
   $('legbtn').disabled = !s;
   if (!s) { L.classList.add('hide'); $('legbtn').classList.remove('on'); return; }
   const hidCats = [...s.hiddenCats].map(k => S.cats.find(c => c.key === k)).filter(Boolean).map(cn);
-  L.innerHTML = `<header><span title="${esc(s.name)}">${esc(tc(s.name))}</span><button class="x">×</button></header><div class="body">
+  const multi = s.list.length > 1;
+  L.innerHTML = `<header><span title="${esc(s.name)}">${esc(s.list.map(i => tc(S.schemes[i].name)).join(' ＋ '))}</span><button class="x">×</button></header><div class="body">
     <p class="mut" style="margin:0 0 6px">${t('點選項目可切換顯示。上方的篩選器優先權較高（同 Revit）。')}</p>
-    ${s.legend.map((l, i) => `<div class="lg ${S.legShow[i] ? '' : 'off'}" data-i="${i}">
+    ${s.legend.map((l, i) => `${multi && (i === 0 || s.legend[i - 1].g !== l.g) ? `<div class="lgh">${esc(tc(S.schemes[l.g].name))}</div>` : ''}<div class="lg ${S.legShow[i] ? '' : 'off'}" data-i="${i}">
       <span class="sw" style="background:${l.color >= 0 ? '#' + l.color.toString(16).padStart(6, '0') : 'transparent'}"></span>
       <span class="nm" title="${esc(l.name)}">${esc(tc(l.name))}</span>${l.hide ? `<span class="tag" title="${t('Revit 樣版中此篩選器設為不可見')}">${t('樣版隱藏')}</span>` : ''}<span class="cnt">${l.n ? l.n.toLocaleString() : ''}</span></div>`).join('')}
+    ${S.schemes.filter(x => !x.view).length > 1 ? `<details class="lgx" ${multi ? 'open' : ''}><summary>${t('疊加其他樣版')}${multi ? ` (${s.list.length - 1})` : ''}</summary>
+      ${S.schemes.map((x, i) => i === s.idx || x.view ? '' : `<label class="chk"><input type="checkbox" data-x="${i}" ${s.list.includes(i) ? 'checked' : ''}> ${esc(tc(x.name))}</label>`).join('')}</details>` : ''}
     <div class="row" style="margin-top:8px"><button class="btn sm" id="lgall">${t('全部顯示')}</button><button class="btn sm" id="lgreset">${t('還原樣版設定')}</button></div>
     <div class="row"><label><input type="checkbox" id="lgdim" ${S.dimOthers ? 'checked' : ''}> ${t('其他構件以淺灰顯示')}</label></div>
     <div class="row"><label>${t('樣版隱藏的構件：')}<select id="lghide"><option value="2" ${S.hideMode === 2 ? 'selected' : ''}>${t('半透明')}</option><option value="0" ${S.hideMode === 0 ? 'selected' : ''}>${t('不顯示')}</option></select></label></div>
     ${hidCats.length ? `<p class="mut">${t('樣版關閉的類別：')}${esc(hidCats.join(', '))}</p>` : ''}</div>`;
   L.querySelector('.x').onclick = () => { L.classList.add('hide'); $('legbtn').classList.remove('on'); };
+  L.querySelectorAll('[data-x]').forEach(cb => cb.onchange = () => {
+    const i = +cb.dataset.x, ex = s.list.slice(1).filter(j => j !== i); if (cb.checked) ex.push(i);
+    const open = !L.classList.contains('hide'); setScheme(String(s.idx), true, ex); if (!open) L.classList.add('hide');
+  });
   L.querySelectorAll('.lg').forEach(d => d.onclick = () => { const i = +d.dataset.i; S.legShow[i] = !S.legShow[i]; renderLegend(); applyState(); });
   $('lgall').onclick = () => { S.legShow = s.legend.map(() => true); renderLegend(); applyState(); };
   $('lgreset').onclick = () => { S.legShow = s.legend.map(l => !l.hide); renderLegend(); applyState(); };
@@ -254,7 +283,63 @@ function schemeInfo(cat, k) {
   if (cat.sc[k] >= 0) parts.push(tc(s.legend[cat.sc[k]].name));
   if (cat.sh[k] >= 0 && cat.sh[k] !== cat.sc[k]) parts.push(tc(s.legend[cat.sh[k]].name) + t('（隱藏）'));
   if (!parts.length && s.catColor[cat.key] !== undefined) parts.push(tc(s.legend[s.catColor[cat.key]].name));
-  return `<tr><td>${tcx(s.name)}</td><td>${esc(parts.join(', ') || '—')}</td></tr>`;
+  return `<tr><td>${esc(s.list.map(i => tc(S.schemes[i].name)).join(' ＋ '))}</td><td>${esc(parts.join(', ') || '—')}</td></tr>`;
+}
+
+// ---------------- Revit 已發布的 3D 視圖（data/views.json，來自 Revit「發布設定」） ----------------
+// 切換後：視角、剖面框、視圖中隱藏的構件與顏色（視圖樣版）都和 Revit 一致。
+async function loadViews(V) {
+  try { const r = await fetch('data/views.json' + V); if (!r.ok) throw 0; S.views = (await r.json()).views || []; } catch { S.views = []; }
+  $('vbtn').classList.toggle('hide', !S.views.length);
+  $('vbtn').onclick = () => { const L = $('vlist'); if (L.classList.contains('hide')) renderViews(); L.classList.toggle('hide'); $('vbtn').classList.toggle('on', !L.classList.contains('hide')); };
+}
+function renderViews() {
+  const L = $('vlist');
+  L.innerHTML = `<header><span>${t('Revit 視圖')}</span><button class="x">×</button></header><div class="body">
+    <div class="vi ${S.view ? '' : 'on'}" data-i="-1">${t('（不套用視圖，顯示全部）')}</div>
+    ${S.views.map((v, i) => `<div class="vi ${S.view?.i === i ? 'on' : ''}" data-i="${i}">${esc(tc(v.name))}${v.box ? `<span class="tag">${t('剖面框')}</span>` : ''}</div>`).join('')}</div>`;
+  L.querySelector('.x').onclick = () => { L.classList.add('hide'); $('vbtn').classList.remove('on'); };
+  L.querySelectorAll('.vi').forEach(d => d.onclick = () => { applyView(+d.dataset.i); renderViews(); if (innerWidth < 700) { L.classList.add('hide'); $('vbtn').classList.remove('on'); } });
+}
+function applyView(i) {
+  const v = S.views[i];
+  if (!v) {
+    if (S.view?.prev) Object.assign(S, S.view.prev);
+    S.view = null; updateClip(); applyState(); fitAll(); $('vbtn').classList.remove('act'); return;
+  }
+  const mask = new Map();
+  for (const [key, g] of Object.entries(v.els || {})) {
+    const c = S.cats.find(x => x.key === key); if (!c) continue;
+    const m = new Uint8Array(c.n);
+    if (g.s) { m.fill(1); for (const id of g.s) { const k = c.idIdx.get(id); if (k !== undefined) m[k] = 0; } }
+    else for (const id of g.h || []) { const k = c.idIdx.get(id); if (k !== undefined) m[k] = 1; }
+    mask.set(key, m);
+  }
+  let planes = null;
+  if (v.box) {
+    const o = new THREE.Vector3(...v.box.o);
+    planes = [v.box.a, v.box.b, v.box.c].flatMap(e => {
+      const ev = new THREE.Vector3(...e), n = ev.clone().normalize();
+      return [new THREE.Plane(n, -n.dot(o)), new THREE.Plane(n.clone().negate(), n.dot(o.clone().add(ev)))];
+    });
+  }
+  // Revit 視圖中樣版隱藏的構件就是看不到、其他構件維持原色：切換視圖時比照（離開視圖時還原使用者設定）
+  const prev = S.view?.prev || { hideMode: S.hideMode, dimOthers: S.dimOthers };
+  S.hideMode = 0; S.dimOthers = false;
+  S.view = { i, name: v.name, hc: new Set(v.hc || []), mask, planes, prev };
+  S.clip.on = false; updateClip();
+  // 顏色：視圖樣版（或視圖本身的篩選器）；沒有就用材料色
+  const si = v.scheme ? S.schemes.findIndex(s => s.name === v.scheme) : -1;
+  const sel = $('schsel');
+  if (si >= 0) { sel.value = S.schemes[si].view ? 'mat' : String(si); setScheme(String(si), true); if (S.schemes[si].view) sel.value = 'mat'; }
+  else { sel.value = 'mat'; setScheme('mat', true); }
+  // 視角：透視圖用 Revit 相機位置；等角圖沿 Revit 的視線方向框住視圖內容
+  const dir = new THREE.Vector3(...v.dir).normalize();
+  const fit = v.fit ? new THREE.Box3(new THREE.Vector3(...v.fit[0]), new THREE.Vector3(...v.fit[1])) : S.bbox;
+  if (v.persp) { const eye = new THREE.Vector3(...v.eye); const d = Math.max(fit.getCenter(new THREE.Vector3()).sub(eye).dot(dir), 10); flyTo(eye.clone().addScaledVector(dir, d), eye); }
+  else frame(fit, dir.clone().negate());
+  $('vbtn').classList.add('act');
+  toast(t('視圖：{n}', { n: tc(v.name) }));
 }
 
 // ---------------- 顯示狀態（可見、顏色、透明） ----------------
@@ -266,6 +351,7 @@ function applyState() {
       if (v) {
         const key = cat.ci + ':' + k;
         if (S.hidden.has(key)) v = 0;
+        else if (S.view && (S.view.hc.has(cat.key) || S.view.mask.get(cat.key)?.[k])) v = 0;
         else if (S.isolate && !S.isolate.has(key)) v = 2;
         const sch = S.scheme;
         if (v === 1 && sch) {
@@ -313,7 +399,7 @@ function applyState() {
 const ray = new THREE.Raycaster(); ray.firstHitOnly = false;
 const ndc = new THREE.Vector2();
 function elOf(cat, v) { let lo = 0, hi = cat.n - 1; while (lo < hi) { const m = (lo + hi + 1) >> 1; if (cat.v0[m] <= v) lo = m; else hi = m - 1; } return lo; }
-function inClip(p) { if (!S.clip.on) return true; const b = S.clip.box; return p.x >= b.min.x - 1e-3 && p.x <= b.max.x + 1e-3 && p.y >= b.min.y - 1e-3 && p.y <= b.max.y + 1e-3 && p.z >= b.min.z - 1e-3 && p.z <= b.max.z + 1e-3; }
+function inClip(p) { if (S.view?.planes && S.view.planes.some(P => P.distanceToPoint(p) < -1e-3)) return false; if (!S.clip.on) return true; const b = S.clip.box; return p.x >= b.min.x - 1e-3 && p.x <= b.max.x + 1e-3 && p.y >= b.min.y - 1e-3 && p.y <= b.max.y + 1e-3 && p.z >= b.min.z - 1e-3 && p.z <= b.max.z + 1e-3; }
 function castRay(origin, dir) {
   ray.set(origin, dir); let best = null;
   for (const cat of S.cats) {
@@ -510,7 +596,8 @@ function updateClip() {
   P[0].set(new THREE.Vector3(1, 0, 0), -b.min.x); P[1].set(new THREE.Vector3(-1, 0, 0), b.max.x);
   P[2].set(new THREE.Vector3(0, 1, 0), -b.min.y); P[3].set(new THREE.Vector3(0, -1, 0), b.max.y);
   P[4].set(new THREE.Vector3(0, 0, 1), -b.min.z); P[5].set(new THREE.Vector3(0, 0, -1), b.max.z);
-  solidMat.clippingPlanes = ghostMat.clippingPlanes = S.clip.on ? P : null;
+  const all = [...(S.clip.on ? P : []), ...(S.view?.planes || [])];
+  solidMat.clippingPlanes = ghostMat.clippingPlanes = all.length ? all : null;
   solidMat.needsUpdate = ghostMat.needsUpdate = true;
   clipHelper.visible = S.clip.on && S.tool === 'section';
 }
@@ -742,7 +829,7 @@ function offlinePrep() {
     const reg = await navigator.serviceWorker.ready;
     const V = S.ver, MO = MAN.binFmt === 'meshopt', BX = MO ? 'm.bin' : MAN.binExt || 'bin';
     const urls = ['./', 'index.html', 'app.js', 'i18n.js', 'style.css', 'vendor/three.module.min.js', 'vendor/OrbitControls.js', 'vendor/three-mesh-bvh.module.js',
-      'data/manifest.json', 'data/schemes.json' + V];
+      'data/manifest.json', 'data/schemes.json' + V, 'data/views.json' + V];
     if (MO) urls.push('vendor/meshopt_decoder.module.js');
     if (AR_ON) urls.push('ar.js', 'qrpose.js', 'stations.json', 'vendor/jsQR.js');
     for (const c of MAN.cats) {
