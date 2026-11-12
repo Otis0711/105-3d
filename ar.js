@@ -53,9 +53,10 @@ export async function startAR(ctx) {
     tg: pts.some(p => p.name === LS.get('tg')) ? LS.get('tg') : pts[1]?.name,
     eye: LS.get('eye', 1.5), autoH: LS.get('autoH', true), fov: LS.get('fov', 66), opa: LS.get('opa', 0.85),
     phase: C.PH.indexOf(phName),      // -1 = 全部完成
-    nud: 0, dh: 0, calib: null, hist: [], samples: [],
+    nud: 0, dh: 0, calib: null, hist: [], samples: [], zoom: 1, wp: [], hits: [],
     dragYaw: 0, dragPitch: 0, devQ: null, smQ: null,
   };
+  if (A.method === 'walk' && !xrOK) A.method = 'stake';
   if (A.st === A.tg) A.tg = pts.find(p => p.name !== A.st)?.name;
   window.W3D_AR = { A, C, QP }; // 方便除錯（瀏覽器主控台）
 
@@ -77,6 +78,14 @@ export async function startAR(ctx) {
     const x1 = new THREE.Line(new THREE.BufferGeometry().setFromPoints([v[0], v[2]]), mat), x2 = new THREE.Line(new THREE.BufferGeometry().setFromPoints([v[1], v[3]]), mat);
     loop.renderOrder = x1.renderOrder = x2.renderOrder = 11; A.marks.add(loop, x1, x2);
   }
+
+  // 走點校正：地面上的瞄準圈（WebXR hit-test 打到地面的位置）
+  A.reticle = new THREE.Group(); A.reticle.visible = false;
+  { const m = new THREE.MeshBasicMaterial({ color: 0x22d3ee, depthTest: false, transparent: true, opacity: 0.9, side: THREE.DoubleSide });
+    const ring = new THREE.Mesh(new THREE.RingGeometry(0.07, 0.1, 32), m); ring.rotation.x = -Math.PI / 2;
+    const dot = new THREE.Mesh(new THREE.CircleGeometry(0.015, 12), m); dot.rotation.x = -Math.PI / 2;
+    ring.renderOrder = dot.renderOrder = 12; A.reticle.add(ring, dot); }
+  C.scene.add(A.reticle);
 
   // 沒有陀螺儀或相機時（電腦測試）：拖曳畫面轉向
   let drag = null;
@@ -103,6 +112,7 @@ function bearing() { const a = pt(A.st), b = pt(A.tg); if (!a || !b) return 0; r
 function yawOf(q) { const f = new THREE.Vector3(0, 0, -1).applyQuaternion(q); return Math.atan2(-f.x, -f.z); }
 function pitchOf(q) { const f = new THREE.Vector3(0, 0, -1).applyQuaternion(q); return Math.asin(Math.max(-1, Math.min(1, f.y))); }
 const isQR = () => A.calib?.kind === 'qr';
+const isWalk = () => A.calib?.kind === 'walk';
 // A.dh = 模型上移量（眼睛相對下降）；A.nud = 模型逆時針旋轉量（畫面上往左），單位度
 function eyeY() {
   if (isQR()) return A.calib.c.y;
@@ -115,7 +125,7 @@ const dist = () => { const a = pt(A.st), b = pt(A.tg); return a && b ? Math.hypo
 
 // 站在樁上時，人會在未來的橋墩「裡面」：把包住站立點的構件隱藏，否則鏡頭會被擋住
 function findInside() {
-  const e = eyePos(), set = new Set(), m = 0.3;
+  const eyes = (A.method === 'walk' || isWalk()) && pt(A.st) && pt(A.tg) ? [pos(pt(A.st), 1.5), pos(pt(A.tg), 1.5)] : [eyePos()], set = new Set(), m = 0.3;
   for (const cat of C.S.cats) {
     const P = cat.pos;
     for (let k = 0; k < cat.n; k++) {
@@ -124,7 +134,7 @@ function findInside() {
         const x = P[i], y = P[i + 1], z = P[i + 2];
         if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; if (z < z0) z0 = z; if (z > z1) z1 = z;
       }
-      if (e.x > x0 - m && e.x < x1 + m && e.z > z0 - m && e.z < z1 + m && e.y > y0 - 1 && e.y < y1 + 1) set.add(cat.ci + ':' + k);
+      if (eyes.some(e => e.x > x0 - m && e.x < x1 + m && e.z > z0 - m && e.z < z1 + m && e.y > y0 - 1 && e.y < y1 + 1)) set.add(cat.ci + ':' + k);
     }
   }
   A.inside = set; C.applyState();
@@ -143,7 +153,13 @@ function applyMarks() {
 
 // 校正結果套用到畫面
 function applyCalib() {
-  if (A.kind === 'xr') {
+  if (isWalk()) {
+    // 走點校正：兩個地面點（XR 座標 h1、h2）對應兩根樁（模型座標 w1、w2）。以第二點為轉軸套用 ◀ ▶ 微調
+    const c = A.calib, a = c.a + A.nud * DEG;
+    const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), a);
+    const p = c.h2.clone().sub(c.w2.clone().applyQuaternion(q)); p.y = c.dy + A.dh;
+    C.renderer.xr.setReferenceSpace(A.base.getOffsetReferenceSpace(new XRRigidTransform({ x: p.x, y: p.y, z: p.z, w: 1 }, { x: q.x, y: q.y, z: q.z, w: q.w })));
+  } else if (A.kind === 'xr') {
     // XR 參考空間 → 模型座標：X_xr = R(a)·X_w + p，使站立點眼睛高度落在校正當下的手機位置
     const a = A.calib.psi - bearing() + A.nud * DEG;
     const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), a);
@@ -164,6 +180,7 @@ function go() {
   if (!window.isSecureContext) C.toast(t('AR 需要 https 網址才能使用相機，目前只能預覽。'), 6000);
   LS.set('st', A.st); LS.set('tg', A.tg); LS.set('eye', A.eye); LS.set('method', A.method);
   if (A.method === 'qr') { if (!A.markers.length) { C.toast(t('stations.json 沒有 QR 標記資料（markers）'), 6000); return; } startCam(); return; }
+  if (A.method === 'walk') { startXR().catch(e => { console.warn(e); C.toast(t('WebXR 無法啟動：這支手機不能用走點校正，請改用對準兩根樁'), 6000); }); return; }
   if (A.xrOK) startXR().catch(e => { console.warn('WebXR 失敗，改用相機模式', e); C.toast(t('WebXR 無法啟動，改用相機模式'), 4000); startCam(); });
   else startCam();
 }
@@ -174,10 +191,12 @@ async function startXR() {
   r.xr.setReferenceSpaceType('local');
   // 點在按鈕、資訊視窗上時不要當成點選模型
   if (!A.bxs) { A.bxs = true; C.$('ar').addEventListener('beforexrselect', e => { if (e.target.closest && e.target.closest('#arbar,#arpanel,#info')) e.preventDefault(); }); }
-  const session = await navigator.xr.requestSession('immersive-ar', { requiredFeatures: ['local'], optionalFeatures: ['dom-overlay'], domOverlay: { root: C.$('ar') } });
+  const session = await navigator.xr.requestSession('immersive-ar', { requiredFeatures: ['local'], optionalFeatures: ['dom-overlay', 'hit-test'], domOverlay: { root: C.$('ar') } });
   await r.xr.setSession(session);
   A.base = r.xr.getReferenceSpace();
-  A.kind = 'xr'; A.session = session;
+  A.kind = 'xr'; A.session = session; A.hts = null;
+  // 走點校正用：從畫面中心（十字）往前打到地面的位置
+  try { const vs = await session.requestReferenceSpace('viewer'); A.hts = await session.requestHitTestSource({ space: vs }); } catch (e) { console.warn('hit-test 不支援', e); }
   // 點畫面（非按鈕處）→ 由手機位置往點擊方向打射線，選取構件
   session.addEventListener('select', e => {
     if (A.step !== 'view') return;
@@ -188,7 +207,7 @@ async function startXR() {
     const h = C.castRay(o, d); C.select(h ? { ci: h.cat.ci, k: h.k } : null);
   });
   session.addEventListener('end', () => {
-    r.xr.setReferenceSpace(null); A.kind = null; A.session = null; A.calib = null; A.step = 'setup';
+    r.xr.setReferenceSpace(null); A.kind = null; A.session = null; A.hts = null; A.calib = null; A.step = 'setup'; A.reticle.visible = false;
     C.world.visible = A.marks.visible = true; renderUI();
   });
   toAim();
@@ -226,7 +245,8 @@ function toAim(refine = false) {
     A.calib = null;
     C.world.visible = A.marks.visible = false; // 校正前方向未知，先不顯示模型
   }
-  A.step = !A.refine && A.method === 'qr' ? 'scan' : 'aim';
+  A.step = !A.refine && A.method === 'qr' ? 'scan' : !A.refine && A.method === 'walk' && A.kind === 'xr' ? 'walk' : 'aim';
+  A.wp = []; A.hits = [];
   renderUI();
   if (A.step === 'scan') startScan();
 }
@@ -246,12 +266,49 @@ function confirmAim() {
   afterCalib();
 }
 function afterCalib() {
-  A.nud = 0; A.dh = 0; A.step = 'view';
+  A.nud = 0; A.dh = 0; A.step = 'view'; setZoom(1); A.reticle.visible = false;
   applyCalib(); findInside(); renderUI();
+  if (isWalk()) { const c = A.calib, e = Math.abs(c.dm - c.dw); C.toast(walkText() + String.fromCharCode(10) + (e > 0.3 ? t('距離差超過 30 cm：可能記錄時十字沒對準樁，或手機追蹤漂移，建議重新校正。') : t('請檢查兩根紅色標桿是否落在樁上')), 8000); return; }
   if (isQR()) { C.toast(t('QR 定位完成：請檢查紅框是否疊在真的 QR 牌上'), 5000); return; }
   const h = phoneH();
   if (A.autoH && (h < 0.5 || h > 2.5)) C.toast(t('推算的手機離地高度 {h} m 不合理：請確認十字對準 {name} 樁的入土處，或在設定改用手動高度。', { h: fmt(h, 2), name: A.tg }), 9000);
   else C.toast(t('校正完成：請檢查紅色標桿是否落在 {name} 樁上', { name: A.tg }) + (A.autoH ? String.fromCharCode(10) + t('推算手機離地 {h} m', { h: fmt(h, 2) }) : ''), 5000);
+}
+
+// ---------- 走點校正（Android WebXR）：在第一根樁記錄地面點 → 走到第二根樁再記錄 ----------
+// 兩點連線同時決定方向、位置與高程；不用看清楚遠方的樁。方向誤差 ≈ 橫向誤差 ÷ 兩點距離
+function hitStat() {
+  const H = A.hits; if (H.length < 6) return null;
+  const m = H.reduce((s, h) => s.add(h.p), new THREE.Vector3()).multiplyScalar(1 / H.length);
+  return { m, spread: Math.max(...H.map(h => h.p.distanceTo(m))) };
+}
+function recordWalk() {
+  let p;
+  if (A.hts) {
+    const st = hitStat();
+    if (!st) { C.toast(t('十字還沒有對到地面：請把十字對準樁頂，稍等一下'), 4000); return; }
+    if (st.spread > 0.05) { C.toast(t('晃動中，請拿穩再按'), 3000); return; }
+    p = st.m;
+  } else {
+    // 不支援 hit-test：手機拿在樁正上方，地面 = 手機高度 − 手機離地高度
+    if (!A.viewerP) return; p = A.viewerP.clone(); p.y -= A.eye;
+  }
+  A.wp.push(p); A.hits = [];
+  if (A.wp.length < 2) { C.toast(t('已記錄 {name}，請走到 {b}', { name: A.st, b: A.tg }), 4000); renderUI(); return; }
+  const [h1, h2] = A.wp, w1 = pos(pt(A.st), 0), w2 = pos(pt(A.tg), 0);
+  const a = Math.atan2(h2.x - h1.x, h2.z - h1.z) - Math.atan2(w2.x - w1.x, w2.z - w1.z);
+  A.calib = { kind: 'walk', h1, h2, w1, w2, a, dy: ((h1.y - w1.y) + (h2.y - w2.y)) / 2,
+    dm: Math.hypot(h2.x - h1.x, h2.z - h1.z), dw: Math.hypot(w2.x - w1.x, w2.z - w1.z), dz: (h2.y - h1.y) - (w2.y - w1.y) };
+  afterCalib();
+}
+function walkText() {
+  const c = A.calib;
+  return t('走點校正：實際走了 {m} m，圖面 {w} m（差 {e} cm），高差誤差 {z} cm', { m: fmt(c.dm, 2), w: fmt(c.dw, 2), e: fmt((c.dm - c.dw) * 100, 0), z: fmt(c.dz * 100, 0) });
+}
+
+// 相機模式放大（對準遠方樁時看得比較清楚）：只放大畫面，十字中心的方向不變
+function setZoom(z) {
+  A.zoom = z; const v = C.$('arvid'); if (v) v.style.transform = z > 1 ? `scale(${z})` : '';
 }
 
 // ---------- QR 掃描定位 ----------
@@ -322,6 +379,20 @@ function update(dt, frame) {
         const o = pose.transform.orientation, p = pose.transform.position;
         q = new THREE.Quaternion(o.x, o.y, o.z, o.w);
         if (A.pending) { A.pending = false; A.calib = { kind: 'stake', p: new THREE.Vector3(p.x, p.y, p.z), psi: yawOf(q), pitch: pitchOf(q) }; afterCalib(); }
+        A.viewerP = new THREE.Vector3(p.x, p.y, p.z);
+      }
+      if (A.step === 'walk') {
+        const now = performance.now(), res = A.hts ? frame.getHitTestResults(A.hts) : [];
+        const hp = res.length ? res[0].getPose(A.base) : null;
+        if (hp) { const v = hp.transform.position; A.hits.push({ t: now, p: new THREE.Vector3(v.x, v.y, v.z) }); }
+        A.hits = A.hits.filter(h => now - h.t < 700);
+        A.reticle.visible = !!hp; if (hp) A.reticle.position.copy(A.hits[A.hits.length - 1].p);
+        if (!A.roT || now - A.roT > 150) {
+          A.roT = now; const el = C.$('arro'), st = hitStat(), ok = st && st.spread < 0.05;
+          if (el) el.innerHTML = !A.hts ? t('這支手機不支援地面偵測：手機拿在樁正上方再按記錄（手機離地 {h} m）', { h: fmt(A.eye, 1) })
+            : !hp ? t('尋找地面中…請慢慢左右移動手機')
+            : `${t('距離')} ${fmt(A.viewerP ? Math.hypot(A.viewerP.x - hp.transform.position.x, A.viewerP.z - hp.transform.position.z) : 0, 1)} m　<b class="${ok ? 'ok' : 'no'}">● ${ok ? t('穩定') : t('晃動中')}</b>`;
+        }
       }
     }
   } else {
@@ -358,7 +429,7 @@ function setFov() {
   let fovV;
   if (A.kind === 'cam' && v && v.videoWidth) {
     const s = Math.max(W / v.videoWidth, H / v.videoHeight), longPx = Math.max(v.videoWidth, v.videoHeight) * s;
-    const f = (longPx / 2) / Math.tan(A.fov * DEG / 2);
+    const f = (longPx / 2) / Math.tan(A.fov * DEG / 2) * (A.zoom || 1);
     fovV = 2 * Math.atan((H / 2) / f) / DEG;
   } else fovV = 60;
   if (Math.abs(cam.fov - fovV) > 0.01 || cam.aspect !== W / H) { cam.fov = fovV; cam.aspect = W / H; cam.updateProjectionMatrix(); }
@@ -402,6 +473,7 @@ function calibText() {
     const c = A.calib, ref = c.refined ? '　' + t('方向已用 {name} 修正', { name: c.refined }) : '';
     return t('QR 定位（{id}）：距牌 {d} m，手機高程 {h} m', { id: c.id, d: fmt(c.d, 2), h: fmt(eyeY() - A.dh, 2) }) + ref;
   }
+  if (isWalk()) return walkText();
   return A.autoH && A.calib?.pitch != null ? t('高程：自動（俯角 {a}°），手機離地 {h} m', { a: fmt(-A.calib.pitch / DEG, 2), h: fmt(phoneH(), 2) }) : t('高程：手動，手機離地 {h} m', { h: fmt(phoneH(), 2) });
 }
 
@@ -412,8 +484,18 @@ function renderUI() {
   const head = `<div id="arbar"><b>📷 ${t('現場 AR')}</b>${modeText()}<button class="btn sm" id="arexit">${t('離開')}</button></div>`;
   let body = '';
   if (A.step === 'setup') {
-    const seg = `<div class="seg"><button data-m="stake" class="${A.method === 'stake' ? 'on' : ''}">${t('對準兩根樁')}</button><button data-m="qr" class="${A.method === 'qr' ? 'on' : ''}">${t('掃描 QR 標記')}</button></div>`;
-    if (A.method === 'qr') {
+    const seg = `<div class="seg"><button data-m="stake" class="${A.method === 'stake' ? 'on' : ''}">${t('對準兩根樁')}</button>${A.xrOK ? `<button data-m="walk" class="${A.method === 'walk' ? 'on' : ''}">${t('走到兩根樁')}</button>` : ''}<button data-m="qr" class="${A.method === 'qr' ? 'on' : ''}">${t('掃描 QR 標記')}</button></div>`;
+    if (A.method === 'walk') {
+      body = `<div id="arpanel">${seg}
+      <div class="r2"><label>${t('第一點（先站這裡）')}<select id="arst">${stOpts(A.st)}</select></label>
+      <label>${t('第二點（走過去）')}<select id="artg">${stOpts(A.tg, A.st, A.st)}</select></label></div>
+      <p class="mut">${t('兩點距離 {d} m（20～60 m 最好：太近方向不準，太遠手機追蹤會漂移）', { d: fmt(dist()) })}</p>
+      <div class="r2"><label>${t('顯示到階段')}<select id="arph">${phOpts()}</select></label></div>
+      <button class="btn pri big1" id="argo">${t('開始 AR')}</button>
+      <p class="mut">${t('步驟：① 站在 {a} 樁旁 1～2 m，按「開始 AR」② 十字對準 {a} 樁頂，藍色圈出現且「穩定」時按「記錄」③ 拿著手機走到 {b}（鏡頭朝前、不要遮住），同樣對準 {b} 樁頂按「記錄」。', { a: A.st, b: A.tg })}<br>
+      ${t('不用看清楚遠方的樁，方向、位置、高程一次求出；完成後可以繼續走動。')}</p>
+    </div>`;
+    } else if (A.method === 'qr') {
       body = `<div id="arpanel">${seg}
       <p class="mut">${t('已設定 {n} 個 QR 標記：', { n: A.markers.length })}${A.markers.map(m => `<b>${C.esc(m.id)}</b>${m.desc ? '（' + C.esc(m.desc) + '）' : ''}`).join('、') || '—'}</p>
       <div class="r2"><label>${t('顯示到階段')}<select id="arph">${phOpts()}</select></label></div>
@@ -441,12 +523,23 @@ function renderUI() {
       <p class="mut">${t('讓整個 QR 出現在框內，距離約 1 m，拿穩不動。')}</p>
       <div class="r2"><button class="btn" id="arsw">${t('改用對準兩根樁')}</button></div>
     </div>`;
+  } else if (A.step === 'walk') {
+    const nm = A.wp.length ? A.tg : A.st;
+    body = `<div id="arx"><i></i><i></i><span></span></div>
+    <div id="arpanel">
+      <p class="mut"><b>${A.wp.length ? t('② 走到 {b}，十字對準 {b} 樁頂', { b: A.tg }) : t('① 十字對準 {a} 樁頂', { a: A.st })}</b>${A.wp.length ? '　✓ ' + C.esc(A.st) : ''}</p>
+      <p id="arro" class="mut">…</p>
+      <button class="btn pri big1" id="arrec">${t('記錄 {name}', { name: nm })}</button>
+      <div class="r2"><button class="btn" id="arwr">${t('重來')}</button></div>
+      <p class="mut">${t('站在樁旁 1～2 m 斜看樁比較準。走路時鏡頭朝前、慢慢走，手機會一路追蹤位置。')}</p>
+    </div>`;
   } else if (A.step === 'aim') {
     body = `<div id="arx"><i></i><i></i><span></span></div>
     <div id="arpanel">
       ${A.refine ? `<div class="r2"><label>${t('對準點')}<select id="artg">${stOpts(A.tg)}</select></label></div>`
         : `<div class="r2"><label>${t('站立點')}<select id="arst">${stOpts(A.st)}</select></label><label>${t('對準點')}<select id="artg">${stOpts(A.tg, A.st, A.st)}</select></label></div>`}
       <p id="arro" class="mut">…</p>
+      ${A.kind === 'cam' ? `<div class="seg zm">${[1, 2, 4].map(z => `<button data-z="${z}" class="${A.zoom === z ? 'on' : ''}">${t('放大')} ${z}×</button>`).join('')}</div>` : ''}
       <button class="btn pri big1" id="aron">${A.refine ? t('十字對準 {b} → 修正方向', { b: A.tg }) : A.autoH ? t('十字對準 {b} 入土處 → 確定', { b: A.tg }) : t('十字對準 {b} → 確定', { b: A.tg })}</button>
       ${A.refine ? `<div class="r2"><button class="btn" id="arcan">${t('取消')}</button></div>` : ''}
       <p class="mut">${t('手肘靠緊身體，等顯示「穩定」再按。看不清楚樁時，請人在樁上立標桿。')}${!A.refine && A.autoH ? '<br>' + t('高程自動校正：十字中心要對在樁（或標桿）與地面交接處。') : ''}</p>
@@ -461,7 +554,7 @@ function renderUI() {
       ${A.kind === 'cam' ? `<label class="one">${t('鏡頭視角 {v}°（模型大小和實景不同時調整）', { v: A.fov })}<input type="range" id="arfov" min="40" max="95" step="1" value="${A.fov}"></label>` : ''}
       ${isQR() ? `<div class="r2"><button class="btn" id="arref">${t('對準遠方樁修正方向')}</button></div>` : ''}
       <div class="r2 btns"><button class="btn" id="arre">${isQR() ? t('重新掃描 QR') : t('重新校正')}</button><button class="btn" id="armin">${t(el.classList.contains('min') ? '展開' : '收合')}</button></div>
-      <p class="mut">${isQR() ? t('紅框 = QR 牌的測量位置，應疊在真的 QR 牌上；黃色／紅色標桿 = 已知樁。') : t('紅色標桿 = {b}，應落在真的 {b} 樁上；偏左右按 ◀ ▶（每次 0.1°，按住連續），高低不對按 ▲ ▼。', { b: A.tg })}
+      <p class="mut">${isWalk() ? t('紅色／黃色標桿 = {a}、{b}，應落在真的樁上；偏左右按 ◀ ▶，高低不對按 ▲ ▼。', { a: A.st, b: A.tg }) : isQR() ? t('紅框 = QR 牌的測量位置，應疊在真的 QR 牌上；黃色／紅色標桿 = 已知樁。') : t('紅色標桿 = {b}，應落在真的 {b} 樁上；偏左右按 ◀ ▶（每次 0.1°，按住連續），高低不對按 ▲ ▼。', { b: A.tg })}
       ${A.kind === 'cam' ? '<br>' + t('相機模式不會追蹤走動：移動位置後請回到樁上重新校正。') : ''}<br>${t('點畫面上的構件可查看資訊（再點空白處關閉）。')}</p>
     </div>`;
   }
@@ -479,7 +572,7 @@ function renderUI() {
     if (A.calib && !A.refine) applyCalib();
     renderUI();
   };
-  $('arui').querySelectorAll('.seg [data-m]').forEach(b => b.onclick = () => { A.method = b.dataset.m; LS.set('method', A.method); applyMarks(); renderUI(); });
+  $('arui').querySelectorAll('.seg [data-m]').forEach(b => b.onclick = () => { A.method = b.dataset.m; LS.set('method', A.method); applyMarks(); findInside(); renderUI(); });
   if ($('arst')) $('arst').onchange = e => setSt(e.target.value);
   if ($('artg')) $('artg').onchange = e => A.refine ? (A.tg = e.target.value, LS.set('tg', A.tg), applyMarks(), renderUI()) : setSt(A.st, e.target.value);
   if ($('arauto')) $('arauto').onchange = e => { A.autoH = e.target.checked; LS.set('autoH', A.autoH); renderUI(); };
@@ -487,6 +580,9 @@ function renderUI() {
   if ($('arph')) $('arph').onchange = e => { A.phase = +e.target.value; LS.set('phase', A.phase >= 0 ? C.PH[A.phase] : ''); C.applyState(); };
   if ($('argo')) $('argo').onclick = go;
   if ($('aron')) $('aron').onclick = confirmAim;
+  if ($('arrec')) $('arrec').onclick = recordWalk;
+  if ($('arwr')) $('arwr').onclick = () => { A.wp = []; A.hits = []; renderUI(); };
+  $('arui').querySelectorAll('.zm [data-z]').forEach(b => b.onclick = () => { setZoom(+b.dataset.z); renderUI(); });
   if ($('arcan')) $('arcan').onclick = () => { A.refine = false; A.step = 'view'; renderUI(); };
   if ($('arsw')) $('arsw').onclick = () => { A.method = 'stake'; LS.set('method', 'stake'); toAim(); };
   if ($('arref')) $('arref').onclick = () => toAim(true);

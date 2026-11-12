@@ -213,3 +213,5 @@ body.ar #toast{white-space:pre-line;text-align:center}
   linear-gradient(#22d3ee,#22d3ee) 100% 0/28px 4px no-repeat,linear-gradient(#22d3ee,#22d3ee) 100% 0/4px 28px no-repeat,
   linear-gradient(#22d3ee,#22d3ee) 0 100%/28px 4px no-repeat,linear-gradient(#22d3ee,#22d3ee) 0 100%/4px 28px no-repeat,
   linear-gradient(#22d3ee,#22d3ee) 100% 100%/28px 4px no-repeat,linear-gradient(#22d3ee,#22d3ee) 100% 100%/4px 28px no-repeat}
+#arvid{transform-origin:50% 50%}
+body.ar{overflow:hidden}
