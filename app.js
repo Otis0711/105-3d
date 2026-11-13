@@ -47,6 +47,9 @@ const EMBED = window.self !== window.top; // 嵌在其他網頁裡（如 claude.
 const AR_ON = window.isSecureContext && !EMBED;
 const QM0 = new URLSearchParams(location.search).get('m');      // check / progress / ar
 const QM = !AR_ON && QM0 === 'ar' ? 'check' : QM0;              // AR 關閉時，?m=ar 改開模型檢核
+// 鋼筋（RB_* 類別，依配筋圖產生、不在 Revit 裡）檔案很大，網址加 ?rebar=1 才下載；「更多」面板有按鈕
+const REBAR = new URLSearchParams(location.search).get('rebar') === '1';
+const isRB = c => c.key.startsWith('RB_');
 if (!AR_ON) document.querySelector('#start [data-mode=ar]')?.remove();
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, logarithmicDepthBuffer: true, preserveDrawingBuffer: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -73,7 +76,7 @@ addEventListener('resize', resize); resize();
 // ---------------- 狀態 ----------------
 const S = {
   mode: null, tool: 'select', cats: [], sel: null, hidden: new Set(), isolate: null,
-  phase: 0, showFuture: true, useMat: true, clip: { on: false, box: new THREE.Box3() },
+  phase: 0, showFuture: true, useMat: true, clip: { on: false, box: new THREE.Box3() }, xray: REBAR,
   bbox: new THREE.Box3(), measures: [], mpt: null, walk: false, gps: null, bgLight: false,
 };
 let MAN = null, PH = [];
@@ -103,7 +106,7 @@ async function load() {
   showVersion();
   const phIdx = new Map(PH.map((p, i) => [p, i]));
   // AR（手機現場）不需要地形：現場就是真實地面，也省下約 20 MB 下載與記憶體
-  const CATS = QM === 'ar' ? MAN.cats.filter(c => c.key !== 'OST_Toposolid') : MAN.cats;
+  const CATS = (QM === 'ar' ? MAN.cats.filter(c => c.key !== 'OST_Toposolid') : MAN.cats).filter(c => REBAR || !isRB(c));
   // 幾何檔可用 Base64 文字存放（manifest.binEnc = 'b64'，給只接受文字／媒體檔的主機，如 claude.ai 公開分享）
   const B64 = MAN.binEnc === 'b64';
   const total = CATS.reduce((s, c) => s + c.bytes, 0) * (B64 ? 4 / 3 : 1); let got = 0;
@@ -166,6 +169,7 @@ async function load() {
   await loadSchemes(V);
   await loadViews(V);
   applyState(); fitAll(false);
+  if (S.xray) setXray(true, false), fitAll(false);
   S.loadedN = S.cats.reduce((s, c) => s + c.n, 0);
   $('loadtxt').textContent = t('載入完成：{n} 個構件', { n: S.loadedN.toLocaleString() });
 }
@@ -343,6 +347,13 @@ function applyView(i) {
 }
 
 // ---------------- 顯示狀態（可見、顏色、透明） ----------------
+// 鋼筋透視時，只留「有鋼筋的構件類別」當半透明外殼
+const XRAY_HOST = { RB_Caissons: /^OST_BridgeFoundations$/, RB_Piers: /^OST_StructuralColumns$/ };
+const xrayGhost = key => Object.entries(XRAY_HOST).some(([rb, re]) => re.test(key) && S.cats.some(c => c.key === rb));
+function setXray(on, zoom = true) {
+  S.xray = on; applyState();
+  if (zoom) { const b = new THREE.Box3(); S.cats.forEach(c => { if (isRB(c)) b.union(c.geom.boundingBox); }); if (on && !b.isEmpty()) frame(b); else fitAll(); }
+}
 function applyState() {
   for (const cat of S.cats) {
     const col = cat.ca.array, { n, v0, v1, base, phi, pdi, vis } = cat;
@@ -376,6 +387,8 @@ function applyState() {
           if (ap >= 0 && (phi[k] > ap || (pdi[k] >= 0 && pdi[k] <= ap))) v = 0;
           if (v === 2) v = 0;
         }
+        // 鋼筋透視：鋼筋類別（RB_*）照常顯示，有鋼筋的混凝土類別改半透明，其餘隱藏
+        if (v === 1 && S.xray && !isRB(cat)) v = xrayGhost(cat.key) ? 2 : 0;
         if (v && S.sel && S.sel.ci === cat.ci && S.sel.k === k) { v = 1; c = C_SEL; }
       }
       vis[k] = v;
@@ -725,6 +738,8 @@ function openPanel(tool) {
       ${S.cats.map(c => `<div class="cat"><label title="${esc(c.name)}"><input type="checkbox" data-c="${c.ci}" ${c.on ? 'checked' : ''}><span class="sw" style="background:#${c.color.toString(16).padStart(6, '0')}"></span>${esc(cn(c))}</label><span class="mut" title="${t('匯出時間')}">${esc((c.exported || '').slice(5))}</span><span class="mut" style="min-width:42px;text-align:right">${c.n.toLocaleString()}</span></div>`).join('')}
       <p class="mut">${t('右欄為各類別最後匯出時間（月-日 時:分）與件數。模型更新請在 Revit「3D網站」頁籤按「更新 3D 網站」。')}</p>
       <div class="row"><button class="btn sm" id="call">${t('全選')}</button><button class="btn sm" id="cnone">${t('全不選')}</button><button class="btn sm" id="cshow">${t('取消隱藏／隔離')}</button></div>
+      ${S.cats.some(isRB) ? `<div class="row"><label><input type="checkbox" id="xray" ${S.xray ? 'checked' : ''}> ${t('鋼筋透視（混凝土半透明，只看鋼筋）')}</label></div>`
+        : MAN.cats.some(isRB) ? `<div class="row"><button class="btn" id="rbload">${t('載入鋼筋（另外下載約 {mb} MB）', { mb: (MAN.cats.filter(isRB).reduce((s, c) => s + c.bytes, 0) / 1048576).toFixed(0) })}</button></div>` : ''}
       <h3>${t('顯示')}</h3>
       <div class="row"><label><input type="checkbox" id="umat" ${S.useMat ? 'checked' : ''}> ${t('使用 Revit 材料顏色（取消則依類別上色）')}</label></div>
       <div class="row"><label><input type="checkbox" id="bgl" ${S.bgLight ? 'checked' : ''}> ${t('淺色背景')}</label></div>
@@ -740,6 +755,8 @@ function openPanel(tool) {
       $('umat').onchange = e => { $('schsel').value = e.target.checked ? 'mat' : 'cat'; setScheme($('schsel').value); };
       $('bgl').onchange = e => { S.bgLight = e.target.checked; scene.background.setHex(BG[S.bgLight ? 1 : 0]); };
       $('vfit').onclick = () => fitAll();
+      if ($('xray')) $('xray').onchange = e => setXray(e.target.checked);
+      if ($('rbload')) $('rbload').onclick = () => { const u = new URL(location.href); u.searchParams.set('rebar', '1'); location.href = u.href; };
       if ($('shot')) $('shot').onclick = () => { const a = document.createElement('a'); a.download = `105市道模型_${new Date().toISOString().slice(0, 19).replace(/[T:]/g, '')}.png`; a.href = canvas.toDataURL('image/png'); a.click(); };
       P.querySelectorAll('[data-lang]').forEach(b => { b.classList.toggle('on', b.dataset.lang === window.getLang()); b.onclick = () => window.setLang(b.dataset.lang); });
     };
@@ -832,7 +849,7 @@ function offlinePrep() {
       'data/manifest.json', 'data/schemes.json' + V, 'data/views.json' + V];
     if (MO) urls.push('vendor/meshopt_decoder.module.js');
     if (AR_ON) urls.push('ar.js', 'qrpose.js', 'stations.json', 'vendor/jsQR.js');
-    for (const c of MAN.cats) {
+    for (const c of MAN.cats.filter(c => REBAR || !isRB(c))) {
       urls.push(`data/${c.key}.meta.json${V}`, `data/${c.key}.json${V}`);
       if (c.parts > 1) for (let i = 0; i < c.parts; i++) urls.push(`data/${c.key}.${i}.${BX}${V}`); else urls.push(`data/${c.key}.${BX}${V}`);
     }
