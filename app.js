@@ -348,7 +348,7 @@ function applyView(i) {
 
 // ---------------- 顯示狀態（可見、顏色、透明） ----------------
 // 鋼筋透視時，只留「有鋼筋的構件類別」當半透明外殼
-const XRAY_HOST = { RB_Caissons: /^OST_BridgeFoundations$/, RB_Piers: /^OST_StructuralColumns$/, RB_Abutments: /^OST_StructuralColumns$/ };
+const XRAY_HOST = { RB_Caissons: /^OST_BridgeFoundations$/, RB_Piers: /^OST_StructuralColumns$/, RB_Abutments: /^OST_StructuralColumns$/, RB_Piles: /^OST_GenericModel$/, RB_Deck: /^OST_Floors$/ };
 const xrayGhost = key => Object.entries(XRAY_HOST).some(([rb, re]) => re.test(key) && S.cats.some(c => c.key === rb));
 function setXray(on, zoom = true) {
   S.xray = on; applyState();
